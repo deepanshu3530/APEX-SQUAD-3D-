@@ -1,0 +1,342 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Apex Horizon 3D — Battle Royale</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,500;0,700;1,700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #090d16;
+      font-family: 'Inter', sans-serif;
+      color: #f8fafc;
+    }
+    .font-display {
+      font-family: 'Chakra Petch', sans-serif;
+    }
+    #game-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    /* Portrait orientation prompt overlay for mobile devices */
+    #rotate-overlay {
+      display: none;
+    }
+    @media screen and (orientation: portrait) and (max-width: 900px) {
+      #rotate-overlay {
+        display: flex !important;
+      }
+    }
+    @keyframes tiltPhone {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(-90deg); }
+    }
+    .animate-tilt {
+      animation: tiltPhone 2s ease-in-out infinite;
+    }
+    /* Custom glowing tactical borders & buttons */
+    .tactical-panel {
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+    }
+    .btn-action {
+      background: linear-gradient(145deg, rgba(30, 41, 59, 0.85), rgba(15, 23, 42, 0.92));
+      border: 2px solid rgba(148, 163, 184, 0.35);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.15);
+      transition: transform 0.08s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    .btn-action:active, .btn-action.active {
+      transform: scale(0.92);
+      border-color: #38bdf8;
+      background: rgba(14, 165, 233, 0.35);
+    }
+    .btn-fire {
+      background: radial-gradient(circle at 30% 30%, rgba(244, 63, 94, 0.85), rgba(159, 18, 57, 0.92));
+      border: 2px solid rgba(253, 164, 175, 0.6);
+      box-shadow: 0 0 20px rgba(244, 63, 94, 0.45);
+    }
+    .btn-fire:active, .btn-fire.active {
+      transform: scale(0.9);
+      box-shadow: 0 0 30px rgba(244, 63, 94, 0.85);
+    }
+    #hit-vignette {
+      pointer-events: none;
+      box-shadow: inset 0 0 90px rgba(239, 68, 68, 0);
+      transition: box-shadow 0.12s ease-out;
+    }
+    #hit-vignette.flash {
+      box-shadow: inset 0 0 110px rgba(239, 68, 68, 0.75);
+    }
+    /* Floating NPC world labels */
+    .npc-tag {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      pointer-events: none;
+      will-change: transform, left, top;
+    }
+    /* Circular Revive Progress Ring */
+    .revive-ring-svg {
+      transform: rotate(-90deg);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Mobile Portrait Warning Overlay -->
+  <div id="rotate-overlay" class="fixed inset-0 z-[100] bg-slate-950/95 flex-col items-center justify-center p-6 text-center">
+    <div class="w-16 h-28 border-4 border-sky-400 rounded-2xl mb-6 flex items-center justify-center animate-tilt shadow-lg shadow-sky-500/30">
+      <div class="w-2 h-2 rounded-full bg-sky-400 mt-20"></div>
+    </div>
+    <h2 class="font-display text-2xl font-bold tracking-wider text-sky-400 uppercase mb-2">Rotate Device to Landscape</h2>
+    <p class="text-slate-300 text-sm max-w-xs mb-6">Apex Horizon 3D requires horizontal landscape orientation for optimal dual-stick combat controls.</p>
+    <button id="force-landscape-btn" class="px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-sm tracking-wide shadow-lg shadow-sky-500/30">
+      Lock Landscape Mode
+    </button>
+  </div>
+
+  <!-- 3D Render Canvas -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Damage Vignette -->
+  <div id="hit-vignette" class="fixed inset-0 z-10"></div>
+
+  <!-- 3D Projected NPC Floating Health/State Container -->
+  <div id="npc-hud-layer" class="fixed inset-0 z-10 pointer-events-none overflow-hidden"></div>
+
+  <!-- Notification Toast Banner -->
+  <div id="toast-banner" class="fixed top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none opacity-0 transition-opacity duration-200">
+    <div class="tactical-panel px-4 py-1.5 rounded-full text-xs font-display font-bold tracking-wider text-amber-300 uppercase flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+      <span id="toast-text">Notification</span>
+    </div>
+  </div>
+
+  <!-- ACTIVE GAMEPLAY HUD -->
+  <div id="gameplay-hud" class="fixed inset-0 z-20 pointer-events-none hidden">
+    <!-- Top Left: Minimap Radar, Player 6-Digit ID & Squad Status -->
+    <div class="absolute top-3 left-3 flex items-start gap-2.5">
+      <div class="relative w-24 h-24 sm:w-32 sm:h-32 rounded-2xl tactical-panel overflow-hidden border-2 border-sky-400/40 shrink-0">
+        <canvas id="minimap-canvas" width="128" height="128" class="w-full h-full"></canvas>
+        <div class="absolute bottom-1 left-0 right-0 text-center text-[9px] font-display tracking-widest text-sky-300/80 uppercase">RADAR</div>
+      </div>
+      <!-- Player Badge, Room Code & Live Squad List -->
+      <div class="flex flex-col gap-1.5 max-w-[175px] sm:max-w-[215px]">
+        <div class="tactical-panel px-2.5 py-1.5 rounded-xl flex items-center gap-2">
+          <img id="hud-avatar" src="https://placehold.co/32x32/0ea5e9/ffffff?text=P" alt="Avatar" class="w-6 h-6 rounded-full border border-sky-400 object-cover shrink-0" />
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1">
+              <span id="hud-player-name" class="text-[11px] font-bold text-slate-100 truncate">Operative</span>
+              <span id="hud-player-id" class="text-[10px] font-display font-bold text-amber-300 shrink-0">#000000</span>
+            </div>
+            <div class="flex items-center gap-2 text-[9px] font-display text-sky-300">
+              <span id="hud-room-badge">SOLO SQUAD</span>
+              <span>•</span>
+              <span>ZONE: <b id="zone-radius-text">110m</b></span>
+            </div>
+          </div>
+        </div>
+        <!-- Live Squadmates Health & Knocked Status Panel -->
+        <div id="hud-squad-list" class="tactical-panel px-2.5 py-1.5 rounded-xl flex flex-col gap-1 text-[10px]">
+          <!-- Populated dynamically with squadmates & 6-digit IDs -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Top Right: Alive Counter, Eliminations, Sound & Pause -->
+    <div class="absolute top-3 right-3 flex items-center gap-2 pointer-events-auto">
+      <div class="tactical-panel px-3 py-1.5 rounded-xl flex items-center gap-3 font-display">
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] text-slate-400 uppercase">Alive</span>
+          <span id="hud-alive" class="text-base sm:text-lg font-bold text-emerald-400">9</span>
+        </div>
+        <div class="w-px h-5 bg-slate-700"></div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] text-slate-400 uppercase">Kills</span>
+          <span id="hud-kills" class="text-base sm:text-lg font-bold text-rose-400">0</span>
+        </div>
+      </div>
+      <button id="toggle-audio-btn" title="Toggle Audio" class="tactical-panel w-9 h-9 rounded-xl flex items-center justify-center text-slate-200 hover:text-sky-400 active:scale-95">
+    <!-- Context Interact Prompt (Terminal Hack OR Teammate Revive) -->
+    <div id="interact-prompt" class="hidden absolute bottom-32 left-1/2 -translate-x-1/2 pointer-events-auto z-30">
+      <button id="prompt-interact-btn" class="tactical-panel px-4 py-2 rounded-2xl border border-amber-400/70 bg-slate-900/90 text-amber-200 font-display text-xs sm:text-sm font-bold tracking-wider uppercase flex items-center gap-2.5 shadow-xl">
+        <span class="px-1.5 py-0.5 bg-amber-400 text-slate-950 rounded text-[10px]">E / HOLD</span>
+        <span id="interact-prompt-label">Hack Supply Terminal</span>
+      </button>
+    </div>
+
+    <!-- Active Revive Channeling Progress Ring Overlay -->
+    <div id="revive-progress-overlay" class="hidden absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 flex-col items-center pointer-events-none">
+      <div class="relative w-20 h-20 flex items-center justify-center bg-slate-950/75 rounded-full backdrop-blur-sm border border-emerald-400/40">
+        <svg class="w-16 h-16 revive-ring-svg" viewBox="0 0 64 64">
+          <circle cx="32" cy="32" r="26" stroke="rgba(148,163,184,0.25)" stroke-width="6" fill="none" />
+          <circle id="revive-progress-circle" cx="32" cy="32" r="26" stroke="#10b981" stroke-width="6" stroke-linecap="round" fill="none" stroke-dasharray="163.36" stroke-dashoffset="163.36" />
+        </svg>
+        <span id="revive-timer-text" class="absolute font-display text-sm font-bold text-emerald-300">4.0s</span>
+      </div>
+      <div id="revive-target-label" class="mt-1.5 px-3 py-0.5 rounded-full bg-emerald-950/90 border border-emerald-400/50 text-[11px] font-display font-bold text-emerald-200 uppercase tracking-wider">
+        Reviving Teammate...
+      </div>
+    </div>
+
+    <!-- Knocked Out (Downed) Banner for Local Player -->
+    <div id="downed-banner" class="hidden absolute top-20 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+      <div class="tactical-panel px-5 py-2 rounded-2xl border-2 border-rose-500/80 bg-rose-950/85 text-center shadow-lg">
+        <div class="font-display text-sm sm:text-base font-bold text-rose-300 uppercase tracking-wider animate-pulse">
+          KNOCKED DOWN — CRAWL TO COVER!
+        </div>
+        <div class="text-[11px] text-rose-100 font-display">
+          Bleed-out in <span id="downed-bleed-timer" class="font-bold text-amber-300">25.0s</span> • Squadmate can revive you!
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Center: Health, Shield & Weapon Ammo Status -->
+    <div class="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 w-64 sm:w-80">
+      <!-- Weapon & Ammo Pill -->
+      <div class="tactical-panel px-3.5 py-1 rounded-full flex items-center justify-between w-full text-xs font-display">
+        <span id="hud-weapon-name" class="font-bold text-amber-300 tracking-wider">MK-IV PULSE RIFLE</span>
+        <div class="flex items-center gap-1">
+          <span id="hud-ammo" class="text-sm font-bold text-white">30</span>
+          <span class="text-slate-400">/</span>
+          <span id="hud-reserve" class="text-slate-300">120</span>
+        </div>
+      </div>
+      <!-- Shield & HP Bars -->
+      <div class="tactical-panel p-2 rounded-2xl w-full flex flex-col gap-1.5">
+        <!-- Shield Bar -->
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-display font-bold text-sky-400 w-7">SHD</span>
+          <div class="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+            <div id="hud-shield-bar" class="h-full bg-gradient-to-r from-sky-500 to-cyan-300 transition-all duration-150" style="width: 100%"></div>
+          </div>
+          <span id="hud-shield-text" class="text-[10px] font-display font-bold text-sky-300 w-7 text-right">100</span>
+        </div>
+        <!-- Health Bar -->
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-display font-bold text-emerald-400 w-7">HP</span>
+          <div class="flex-1 h-2.5 bg-slate-800 rounded-full overflow-hidden">
+            <div id="hud-hp-bar" class="h-full bg-gradient-to-r from-emerald-500 to-lime-400 transition-all duration-150" style="width: 100%"></div>
+          </div>
+          <span id="hud-hp-text" class="text-[10px] font-display font-bold text-emerald-300 w-7 text-right">100</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Desktop Pointer Lock Hint -->
+    <div id="desktop-hint" class="hidden md:flex absolute bottom-3 left-3 tactical-panel px-3 py-1.5 rounded-xl text-[11px] text-slate-300 gap-2.5">
+      <span><b class="text-sky-400">WASD</b> Move</span>
+      <span><b class="text-sky-400">SHIFT</b> Sprint</span>
+      <span><b class="text-sky-400">SPACE</b> Jump</span>
+      <span><b class="text-sky-400">LMB</b> Fire</span>
+      <span><b class="text-sky-400">RMB</b> Aim</span>
+      <span><b class="text-sky-400">R</b> Reload</span>
+      <span><b class="text-emerald-400">E (Hold)</b> Revive / Hack</span>
+    </div>
+
+    <!-- MOBILE / TOUCH DUAL-STICK & ACTION BUTTONS -->
+    <div id="touch-controls" class="fixed inset-0 pointer-events-none">
+      <!-- Left Virtual Joystick Zone -->
+      <div id="joystick-zone" class="absolute bottom-4 left-4 w-36 h-36 sm:w-40 sm:h-40 rounded-full bg-slate-900/35 border-2 border-slate-500/30 pointer-events-auto flex items-center justify-center">
+        <div id="joystick-knob" class="w-14 h-14 rounded-full bg-sky-400/50 border-2 border-sky-300 shadow-[0_0_15px_rgba(56,189,248,0.5)] pointer-events-none transition-transform duration-75"></div>
+      </div>
+
+      <!-- Right Touch Look / Camera Drag Surface -->
+      <div id="look-zone" class="absolute top-14 right-0 w-1/2 bottom-0 pointer-events-auto"></div>
+
+      <!-- Right Action Buttons Cluster -->
+      <div class="absolute bottom-4 right-4 pointer-events-auto flex items-end gap-3">
+        <!-- Secondary Tactical Buttons Column -->
+        <div class="flex flex-col gap-2.5 mb-1">
+          <button id="btn-touch-aim" class="btn-action w-12 h-12 rounded-full flex items-center justify-center text-sky-300 font-display text-xs font-bold">
+            AIM
+          </button>
+          <button id="btn-touch-sprint" class="btn-action w-12 h-12 rounded-full flex items-center justify-center text-amber-300 font-display text-[11px] font-bold">
+        <!-- Jump, Reload & Revive/Interact Column -->
+        <div class="flex flex-col gap-2 mb-1">
+          <button id="btn-touch-revive" class="btn-action w-12 h-12 rounded-full flex items-center justify-center text-emerald-300 border-emerald-400/50 font-display text-[10px] font-bold leading-tight text-center">
+            REVIVE<br/>/ USE
+          </button>
+          <button id="btn-touch-reload" class="btn-action w-12 h-12 rounded-full flex items-center justify-center text-slate-200 font-display text-xs font-bold">
+            RLD
+          </button>
+          <button id="btn-touch-jump" class="btn-action w-13 h-13 w-12 h-12 rounded-full flex items-center justify-center text-sky-300 font-display text-xs font-bold">
+            JUMP
+          </button>
+        </div>
+        <!-- Primary Fire Trigger -->
+  <!-- LOBBY / SIGN-IN & MULTIPLAYER ROOM SCREEN -->
+  <div id="lobby-screen" class="fixed inset-0 z-30 bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="tactical-panel max-w-3xl w-full rounded-3xl p-4 sm:p-6 border border-sky-400/30 flex flex-col md:flex-row gap-5 items-stretch justify-between">
+      <!-- Left Branding, 6-Digit Player ID & Auth -->
+      <div class="flex-1 flex flex-col items-start text-left justify-between">
+        <div>
+          <div class="flex flex-wrap items-center gap-2 mb-2">
+            <div class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sky-500/15 border border-sky-400/30 text-sky-300 text-[10px] font-display font-bold tracking-widest uppercase">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Multiplayer Squad Arena
+            </div>
+            <button id="copy-id-btn" title="Copy 6-Digit Player ID" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-display font-bold tracking-wider uppercase hover:bg-amber-500/30 active:scale-95">
+              <span>ID:</span>
+              <span id="lobby-player-id">#000000</span>
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button>
+          </div>
+          <h1 class="font-display text-2xl sm:text-4xl font-bold italic tracking-tight text-white leading-none mb-1.5">
+            APEX <span class="text-sky-400">HORIZON</span> 3D
+          </h1>
+          <p class="text-slate-300 text-xs mb-3 leading-relaxed">
+            Play solo with AI squadmates or join a live 6-digit Multiplayer Squad Room. Revive knocked teammates in 4 seconds and survive the shrinking zone!
+          </p>
+        </div>
+
+        <!-- Account Card -->
+        <div id="auth-card" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-2xl p-2.5 mb-3 flex items-center justify-between gap-2.5">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <img id="lobby-avatar" src="https://placehold.co/44x44/0ea5e9/ffffff?text=G" alt="Player Avatar" class="w-9 h-9 rounded-xl border border-sky-400/50 object-cover shrink-0" />
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5">
+                <span id="lobby-user-name" class="text-xs sm:text-sm font-bold text-white truncate">Guest Operative</span>
+                <span id="lobby-card-id" class="text-[11px] font-display font-bold text-amber-300">#000000</span>
+              </div>
+              <div id="lobby-user-status" class="text-[10px] text-slate-400 truncate">Demo Mode • Unique ID Assigned</div>
+            </div>
+          </div>
+          <button id="google-signin-btn" class="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs flex items-center gap-1.5 shrink-0 shadow transition active:scale-95">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/>
+              <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24z"/>
+              <path fill="#FBBC05" d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14z"/>
+              <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z"/>
+            </svg>
+            <span id="google-btn-label">Sign in</span>
+          </button>
+        </div>
+
+        <!-- Multiplayer Room Controls -->
+        <div class="w-full bg-slate-900/90 border border-sky-500/30 rounded-2xl p-2.5 mb-3 flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] font-display font-bold uppercase tracking-wider text-sky-400">Multiplayer Squad Room</span>
+            <span id="room-status-pill" class="text-[10px] font-display text-emerald-400">Mode: Solo + AI Squad</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <input id="room-code-input" type="text" maxlength="6" placeholder="Enter 6-Digit Room" class="w-36 sm:w-40 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-xs font-display font-bold tracking-widest text-amber-300 placeholder-slate-500 uppercase focus:outline-none focus:border-sky-400" />
+            <button id="join-room-btn" class="px-3 py-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/50 text-sky-300 font-display font-bold text-xs uppercase transition active:scale-95">
+              Join Room
+   
